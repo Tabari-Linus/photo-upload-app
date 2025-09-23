@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Photo Gallery - ECS Lab</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+</head>
+<body>
+<div class="container">
+    <!-- Header Section -->
+    <header>
+        <h1>Photo Gallery Application</h1>
+        <div class="lab-info">
+            <p><strong>Student Name:</strong> <span th:text="${studentName}">Tabari Linus</span></p>
+            <p><strong>Lab Name:</strong> <span th:text="${labName}">Photo Uploader Lab</span></p>
+            <p><strong>Total Photos:</strong> <span th:text="${photoCount}">0</span></p>
+        </div>
+    </header>
+
+    <!-- Alert Messages -->
+    <div th:if="${success}" class="alert alert-success">
+        <span th:text="${success}"></span>
+    </div>
+    <div th:if="${error}" class="alert alert-error">
+        <span th:text="${error}"></span>
+    </div>
+
+    <!-- Upload Section -->
+    <section class="upload-section">
+        <h2>Upload New Photo</h2>
+        <form th:action="@{/upload}" method="post" enctype="multipart/form-data" class="upload-form">
+            <div class="form-group">
+                <label for="file">Select Image:</label>
+                <input type="file" id="file" name="file" accept="image/*" required>
+                <small>Max file size: 10MB (JPEG, PNG, GIF, WEBP)</small>
+            </div>
+            <div class="form-group">
+                <label for="description">Description:</label>
+                <textarea id="description" name="description" rows="3" maxlength="500"
+                          placeholder="Enter photo description (optional)"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">Upload Photo</button>
+        </form>
+    </section>
+
+    <!-- Gallery Section -->
+    <section class="gallery-section">
+        <h2>Photo Gallery</h2>
+        <div class="gallery-grid" th:if="${photos != null and !photos.isEmpty()}">
+            <div class="photo-card" th:each="photo : ${photos}">
+                <div class="photo-wrapper">
+                    <img th:src="${photo.presignedUrl}"
+                         th:alt="${photo.fileName}"
+                         loading="lazy">
+                </div>
+                <div class="photo-info">
+                    <h3 th:text="${photo.fileName}">Photo Name</h3>
+                    <p class="photo-description" th:text="${photo.description != null ? photo.description : 'No description'}">
+                        No description
+                    </p>
+                    <div class="photo-metadata">
+                        <small>Size: <span th:text="${photo.formattedFileSize}">0 KB</span></small>
+                        <small>Uploaded: <span th:text="${#temporals.format(photo.uploadedAt, 'dd-MM-yyyy HH:mm')}">Date</span></small>
+                    </div>
+                    <form th:action="@{/delete/{id}(id=${photo.id})}" method="post" class="delete-form"
+                          onsubmit="return confirm('Are you sure you want to delete this photo?');">
+                        <button type="submit" class="btn btn-danger btn-small">Delete</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <div th:if="${photos == null or photos.isEmpty()}" class="no-photos">
+            <p>No photos uploaded yet. Start by uploading your first photo!</p>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <p>&copy; 2024 Photo Gallery Lab - Running on Amazon ECS Fargate</p>
+        <p>Infrastructure: VPC | ECS | RDS PostgreSQL | S3 | ALB</p>
+    </footer>
+</div>
+
+<script>
+    // Preview image before upload
+    document.getElementById('file').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file && file.size > 10 * 1024 * 1024) {
+            alert('File size exceeds 10MB limit');
+            e.target.value = '';
+        }
+    });
+
+    // Auto-hide alerts after 5 seconds
+    setTimeout(function() {
+        const alerts = document.querySelectorAll('.alert');
+        alerts.forEach(function(alert) {
+            alert.style.display = 'none';
+        });
+    }, 5000);
+</script>
+</body>
+</html>
