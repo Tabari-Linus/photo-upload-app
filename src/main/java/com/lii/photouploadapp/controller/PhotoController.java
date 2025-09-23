@@ -130,6 +130,7 @@ public class PhotoController {
     }
 
     /**
+     *
      * Actuator health endpoint (alternative)
      */
     @GetMapping("/actuator/health")
