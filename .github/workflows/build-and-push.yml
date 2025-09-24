@@ -88,7 +88,7 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ steps.meta.outputs.sha_short }}
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          ARTIFACTS_BUCKET: photo-upload-app-artifacts-${{ secrets.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}
+          ARTIFACTS_BUCKET: photo-upload-app-artifacts-$AWS_ACCOUNT_ID-${{ env.AWS_REGION }}
         run: |
           echo "Zipping deployment artifacts..."
           zip -r build-artifact.zip appspec.yaml taskdef.json
