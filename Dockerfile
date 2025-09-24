@@ -20,6 +20,9 @@ RUN mvn clean package -DskipTests
 # Stage 2: Runtime stage
 FROM eclipse-temurin:21-jre-alpine
 
+# Update packages to fix vulnerabilities like CVE-2025-59375 in libexpat
+RUN apk update && apk upgrade
+
 # Install required packages for health checks
 RUN apk add --no-cache curl
 
