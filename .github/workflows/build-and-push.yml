@@ -94,7 +94,7 @@ jobs:
           zip -r build-artifact.zip appspec.yaml taskdef.json
           
           echo "Uploading build-artifact.zip to S3://${{ env.ARTIFACTS_BUCKET }}..."
-          aws s3 cp build-artifact.zip s3://photo-upload-app-artifacts-${{ secrets.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}/build-artifact.zip
+          aws s3 cp build-artifact.zip s3://${{ env.ARTIFACTS_BUCKET }}/build-artifact.zip
           
           echo "✅ Deployment artifacts uploaded successfully!"
 
