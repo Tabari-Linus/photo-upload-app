@@ -1,0 +1,69 @@
+{
+  "family": "photo-upload-app-task",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/photo-upload-app-task-execution-role",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/photo-upload-app-task-role",
+  "containerDefinitions": [
+    {
+      "name": "photo-upload-app",
+      "image": "<IMAGE1_NAME>",
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "protocol": "tcp"
+        }
+      ],
+      "essential": true,
+      "environment": [
+        {
+          "name": "SPRING_PROFILES_ACTIVE",
+          "value": "production"
+        },
+        {
+          "name": "AWS_REGION",
+          "value": "eu-central-1"
+        },
+        {
+          "name": "S3_BUCKET_NAME",
+          "value": "photo-upload-app-photos-ACCOUNT_ID-eu-central-1"
+        },
+        {
+          "name": "STUDENT_NAME",
+          "value": "Tabari Linus"
+        },
+        {
+          "name": "DB_URL",
+          "value": "jdbc:postgresql://DB_ENDPOINT:5432/photodb"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "DB_USERNAME",
+          "valueFrom": "arn:aws:secretsmanager:eu-central-1:ACCOUNT_ID:secret:photo-upload-app/rds/master-password:username::"
+        },
+        {
+          "name": "DB_PASSWORD",
+          "valueFrom": "arn:aws:secretsmanager:eu-central-1:ACCOUNT_ID:secret:photo-upload-app/rds/master-password:password::"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/photo-upload-app",
+          "awslogs-region": "eu-central-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      }
+    }
+  ]
+}

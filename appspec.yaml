@@ -1,0 +1,18 @@
+version: 0.0
+Resources:
+  - TargetService:
+      Type: AWS::ECS::Service
+      Properties:
+        TaskDefinition: <TASK_DEFINITION>
+        LoadBalancerInfo:
+          ContainerName: "photo-upload-app"
+          ContainerPort: 8080
+        PlatformVersion: "LATEST"
+        NetworkConfiguration:
+          AwsvpcConfiguration:
+            Subnets:
+              - "subnet-PLACEHOLDER-1"
+              - "subnet-PLACEHOLDER-2"
+            SecurityGroups:
+              - "sg-PLACEHOLDER"
+            AssignPublicIp: "DISABLED"
