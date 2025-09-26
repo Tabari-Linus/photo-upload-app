@@ -100,15 +100,11 @@ jobs:
           echo "Latest artifact name: $LATEST_ARTIFACT"
           echo "S3 Bucket: $ARTIFACTS_BUCKET"
           
-          # Verify S3 bucket exists and is accessible
-          echo "Checking S3 bucket accessibility..."
-          aws s3 ls s3://$ARTIFACTS_BUCKET/ || {
-            echo "Error: Cannot access S3 bucket $ARTIFACTS_BUCKET"
-            exit 1
-          }
+          # Note: Skipping S3 bucket accessibility check to avoid ListBucket permission requirement
+          echo "Proceeding with artifact creation and upload..."
           
           # Create correct appspec.yaml for ECS blue/green deployment
-          cat > appspec.yaml << EOF
+          cat > appspec.yaml << 'EOF'
           version: 0.0
           Resources:
             - TargetService:
@@ -118,73 +114,73 @@ jobs:
                   LoadBalancerInfo:
                     ContainerName: "photo-upload-app"
                     ContainerPort: 8080
-          EOF
-          
-          # Create taskdef.json with actual image
-          cat > taskdef.json << EOF
-          {
-            "family": "photo-upload-app-task",
-            "networkMode": "awsvpc",
-            "requiresCompatibilities": ["FARGATE"],
-            "cpu": "512",
-            "memory": "1024",
-            "executionRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/photo-upload-app-ECSTaskExecutionRole-${AWS_REGION}",
-            "taskRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/photo-upload-app-ECSTaskRole-${AWS_REGION}",
-            "containerDefinitions": [
-              {
-                "name": "photo-upload-app",
-                "image": "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
-                "portMappings": [
-                  {
-                    "containerPort": 8080,
-                    "protocol": "tcp"
-                  }
-                ],
-                "essential": true,
-                "environment": [
-                  {
-                    "name": "SPRING_PROFILES_ACTIVE",
-                    "value": "production"
-                  },
-                  {
-                    "name": "AWS_REGION",
-                    "value": "$AWS_REGION"
-                  },
-                  {
-                    "name": "S3_BUCKET_NAME",
-                    "value": "photo-upload-app-photos-${AWS_ACCOUNT_ID}-${AWS_REGION}"
-                  },
-                  {
-                    "name": "STUDENT_NAME",
-                    "value": "Tabari Linus"
-                  },
-                  {
-                    "name": "DB_URL",
-                    "value": "jdbc:postgresql://photo-upload-app-postgres-db.${AWS_REGION}.rds.amazonaws.com:5432/photodb"
-                  }
-                ],
-                "secrets": [
-                  {
-                    "name": "DB_USERNAME",
-                    "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:photo-upload-app/rds/master-password:username::"
-                  },
-                  {
-                    "name": "DB_PASSWORD",
-                    "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:photo-upload-app/rds/master-password:password::"
-                  }
-                ],
-                "logConfiguration": {
-                  "logDriver": "awslogs",
-                  "options": {
-                    "awslogs-group": "/ecs/photo-upload-app",
-                    "awslogs-region": "$AWS_REGION",
-                    "awslogs-stream-prefix": "ecs"
+            EOF
+            
+            # Create taskdef.json with actual image
+            cat > taskdef.json << EOF
+            {
+              "family": "photo-upload-app-task",
+              "networkMode": "awsvpc",
+              "requiresCompatibilities": ["FARGATE"],
+              "cpu": "512",
+              "memory": "1024",
+              "executionRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/photo-upload-app-ECSTaskExecutionRole-${AWS_REGION}",
+              "taskRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/photo-upload-app-ECSTaskRole-${AWS_REGION}",
+              "containerDefinitions": [
+                {
+                  "name": "photo-upload-app",
+                  "image": "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
+                  "portMappings": [
+                    {
+                      "containerPort": 8080,
+                      "protocol": "tcp"
+                    }
+                  ],
+                  "essential": true,
+                  "environment": [
+                    {
+                      "name": "SPRING_PROFILES_ACTIVE",
+                      "value": "production"
+                    },
+                    {
+                      "name": "AWS_REGION",
+                      "value": "$AWS_REGION"
+                    },
+                    {
+                      "name": "S3_BUCKET_NAME",
+                      "value": "photo-upload-app-photos-${AWS_ACCOUNT_ID}-${AWS_REGION}"
+                    },
+                    {
+                      "name": "STUDENT_NAME",
+                      "value": "Tabari Linus"
+                    },
+                    {
+                      "name": "DB_URL",
+                      "value": "jdbc:postgresql://photo-upload-app-postgres-db.${AWS_REGION}.rds.amazonaws.com:5432/photodb"
+                    }
+                  ],
+                  "secrets": [
+                    {
+                      "name": "DB_USERNAME",
+                      "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:photo-upload-app/rds/master-password:username::"
+                    },
+                    {
+                      "name": "DB_PASSWORD",
+                      "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:photo-upload-app/rds/master-password:password::"
+                    }
+                  ],
+                  "logConfiguration": {
+                    "logDriver": "awslogs",
+                    "options": {
+                      "awslogs-group": "/ecs/photo-upload-app",
+                      "awslogs-region": "$AWS_REGION",
+                      "awslogs-stream-prefix": "ecs"
+                    }
                   }
                 }
-              }
-            ]
-          }
-          EOF
+              ]
+            }
+            EOF
           
           # Verify files were created
           echo "Verifying created files..."
@@ -216,11 +212,8 @@ jobs:
             exit 1
           }
           
-          # Verify uploads
-          echo "Verifying uploads..."
-          aws s3 ls s3://$ARTIFACTS_BUCKET/ | grep -E "(${ARTIFACT_NAME}|${LATEST_ARTIFACT})" || {
-            echo "Warning: Could not verify artifact uploads"
-          }
+          # Note: Skipping upload verification to avoid ListBucket permission requirement
+          echo "Uploads completed. If no errors occurred above, artifacts should be available."
           
           # Create a trigger file to signal CodePipeline
           echo "Creating pipeline trigger file..."
