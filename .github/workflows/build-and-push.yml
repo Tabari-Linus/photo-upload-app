@@ -90,11 +90,137 @@ jobs:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
           ARTIFACTS_BUCKET: photo-upload-app-artifacts-${{ secrets.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}
         run: |
+          # Get actual values from AWS
+          echo "Fetching actual resource values from AWS..."
+          
+          # Get subnet IDs
+          SUBNET_A=$(aws cloudformation describe-stacks --stack-name photo-upload-app --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetAId'].OutputValue" --output text)
+          SUBNET_B=$(aws cloudformation describe-stacks --stack-name photo-upload-app --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetBId'].OutputValue" --output text)
+          
+          # Get security group ID
+          TASK_SG=$(aws cloudformation describe-stacks --stack-name photo-upload-app --query "Stacks[0].Outputs[?OutputKey=='ECSTaskSecurityGroupId'].OutputValue" --output text)
+          
+          # Get DB endpoint
+          DB_ENDPOINT=$(aws cloudformation describe-stacks --stack-name photo-upload-app --query "Stacks[0].Outputs[?OutputKey=='DatabaseEndpoint'].OutputValue" --output text)
+          
+          # Get secret ARN
+          SECRET_ARN=$(aws cloudformation describe-stacks --stack-name photo-upload-app --query "Stacks[0].Outputs[?OutputKey=='DBPasswordSecretArn'].OutputValue" --output text)
+          
+          # Get task execution role ARN
+          TASK_EXEC_ROLE=$(aws cloudformation describe-stacks --stack-name photo-upload-app --query "Stacks[0].Outputs[?OutputKey=='ECSTaskExecutionRoleArn'].OutputValue" --output text)
+          
+          # Get task role ARN
+          TASK_ROLE=$(aws cloudformation describe-stacks --stack-name photo-upload-app --query "Stacks[0].Outputs[?OutputKey=='ECSTaskRoleArn'].OutputValue" --output text)
+          
+          # Get S3 bucket name
+          S3_BUCKET=$(aws cloudformation describe-stacks --stack-name photo-upload-app --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
+          
+          echo "Subnet A: $SUBNET_A"
+          echo "Subnet B: $SUBNET_B"
+          echo "Security Group: $TASK_SG"
+          echo "DB Endpoint: $DB_ENDPOINT"
+          echo "Secret ARN: $SECRET_ARN"
+          
+          # Create dynamic appspec.yaml
+          cat > appspec.yaml << EOF
+          version: 0.0
+          Resources:
+            - TargetService:
+                Type: AWS::ECS::Service
+                Properties:
+                  TaskDefinition: <TASK_DEFINITION>
+                  LoadBalancerInfo:
+                    ContainerName: "photo-upload-app"
+                    ContainerPort: 8080
+                  PlatformVersion: "LATEST"
+                  NetworkConfiguration:
+                    AwsvpcConfiguration:
+                      Subnets:
+                        - "$SUBNET_A"
+                        - "$SUBNET_B"
+                      SecurityGroups:
+                        - "$TASK_SG"
+                      AssignPublicIp: "DISABLED"
+            EOF
+            
+            # Create dynamic taskdef.json
+            cat > taskdef.json << EOF
+            {
+              "family": "photo-upload-app-task",
+              "networkMode": "awsvpc",
+              "requiresCompatibilities": ["FARGATE"],
+              "cpu": "512",
+              "memory": "1024",
+              "executionRoleArn": "$TASK_EXEC_ROLE",
+              "taskRoleArn": "$TASK_ROLE",
+              "containerDefinitions": [
+                {
+                  "name": "photo-upload-app",
+                  "image": "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
+                  "portMappings": [
+                    {
+                      "containerPort": 8080,
+                      "protocol": "tcp"
+                    }
+                  ],
+                  "essential": true,
+                  "environment": [
+                    {
+                      "name": "SPRING_PROFILES_ACTIVE",
+                      "value": "production"
+                    },
+                    {
+                      "name": "AWS_REGION",
+                      "value": "$AWS_REGION"
+                    },
+                    {
+                      "name": "S3_BUCKET_NAME",
+                      "value": "$S3_BUCKET"
+                    },
+                    {
+                      "name": "STUDENT_NAME",
+                      "value": "Tabari Linus"
+                    },
+                    {
+                      "name": "DB_URL",
+                      "value": "jdbc:postgresql://$DB_ENDPOINT:5432/photodb"
+                    }
+                  ],
+                  "secrets": [
+                    {
+                      "name": "DB_USERNAME",
+                      "valueFrom": "${SECRET_ARN}:username::"
+                    },
+                    {
+                      "name": "DB_PASSWORD",
+                      "valueFrom": "${SECRET_ARN}:password::"
+                    }
+                  ],
+                  "logConfiguration": {
+                    "logDriver": "awslogs",
+                    "options": {
+                      "awslogs-group": "/ecs/photo-upload-app",
+                      "awslogs-region": "$AWS_REGION",
+                      "awslogs-stream-prefix": "ecs"
+                    }
+                  },
+                  "healthCheck": {
+                    "command": ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"],
+                    "interval": 30,
+                    "timeout": 5,
+                    "retries": 3,
+                    "startPeriod": 60
+                  }
+                }
+              ]
+            }
+            EOF
+          
           echo "Zipping deployment artifacts..."
           zip -r build-artifact.zip appspec.yaml taskdef.json
           
-          echo "Uploading build-artifact.zip to S3://${{ env.ARTIFACTS_BUCKET }}..."
-          aws s3 cp build-artifact.zip s3://${{ env.ARTIFACTS_BUCKET }}/build-artifact.zip
+          echo "Uploading build-artifact.zip to S3://$ARTIFACTS_BUCKET..."
+          aws s3 cp build-artifact.zip s3://$ARTIFACTS_BUCKET/build-artifact.zip
           
           echo "✅ Deployment artifacts uploaded successfully!"
 
