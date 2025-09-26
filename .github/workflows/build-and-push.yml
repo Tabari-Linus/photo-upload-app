@@ -81,120 +81,6 @@ jobs:
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
 
-#      # Step 9: Create and Upload Deployment Artifacts
-#      - name: Create and Upload Deployment Artifacts
-#        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-#        env:
-#          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-#          IMAGE_TAG: ${{ steps.meta.outputs.sha_short }}
-#          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-#          ARTIFACTS_BUCKET: photo-upload-app-artifacts-${{ secrets.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}
-#        run: |
-#          # Create unique filename with commit SHA and timestamp
-#          TIMESTAMP=$(date +'%Y%m%d%H%M%S')
-#          ARTIFACT_NAME="build-artifact-${IMAGE_TAG}-${TIMESTAMP}.zip"
-#          LATEST_ARTIFACT="build-artifact-latest.zip"
-#
-#          echo "Creating deployment artifacts with unique name: $ARTIFACT_NAME"
-#
-#          # Create correct appspec.yaml for ECS blue/green deployment
-#          cat > appspec.yaml << EOF
-#          version: 0.0
-#          Resources:
-#            - TargetService:
-#                Type: AWS::ECS::Service
-#                Properties:
-#                  TaskDefinition: "<TASK_DEFINITION>"
-#                  LoadBalancerInfo:
-#                    ContainerName: "photo-upload-app"
-#                    ContainerPort: 8080
-#            EOF
-#
-#            # Create taskdef.json with actual image
-#            cat > taskdef.json << EOF
-#            {
-#              "family": "photo-upload-app-task",
-#              "networkMode": "awsvpc",
-#              "requiresCompatibilities": ["FARGATE"],
-#              "cpu": "512",
-#              "memory": "1024",
-#              "executionRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/photo-upload-app-ECSTaskExecutionRole-${AWS_REGION}",
-#              "taskRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/photo-upload-app-ECSTaskRole-${AWS_REGION}",
-#              "containerDefinitions": [
-#                {
-#                  "name": "photo-upload-app",
-#                  "image": "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
-#                  "portMappings": [
-#                    {
-#                      "containerPort": 8080,
-#                      "protocol": "tcp"
-#                    }
-#                  ],
-#                  "essential": true,
-#                  "environment": [
-#                    {
-#                      "name": "SPRING_PROFILES_ACTIVE",
-#                      "value": "production"
-#                    },
-#                    {
-#                      "name": "AWS_REGION",
-#                      "value": "$AWS_REGION"
-#                    },
-#                    {
-#                      "name": "S3_BUCKET_NAME",
-#                      "value": "photo-upload-app-photos-${AWS_ACCOUNT_ID}-${AWS_REGION}"
-#                    },
-#                    {
-#                      "name": "STUDENT_NAME",
-#                      "value": "Tabari Linus"
-#                    },
-#                    {
-#                      "name": "DB_URL",
-#                      "value": "jdbc:postgresql://photo-upload-app-postgres-db.${AWS_REGION}.rds.amazonaws.com:5432/photodb"
-#                    }
-#                  ],
-#                  "secrets": [
-#                    {
-#                      "name": "DB_USERNAME",
-#                      "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:photo-upload-app/rds/master-password:username::"
-#                    },
-#                    {
-#                      "name": "DB_PASSWORD",
-#                      "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:photo-upload-app/rds/master-password:password::"
-#                    }
-#                  ],
-#                  "logConfiguration": {
-#                    "logDriver": "awslogs",
-#                    "options": {
-#                      "awslogs-group": "/ecs/photo-upload-app",
-#                      "awslogs-region": "$AWS_REGION",
-#                      "awslogs-stream-prefix": "ecs"
-#                    }
-#                  }
-#                }
-#              ]
-#            }
-#            EOF
-#
-#          echo "Zipping deployment artifacts..."
-#          zip -r $ARTIFACT_NAME appspec.yaml taskdef.json
-#
-#          echo "Uploading $ARTIFACT_NAME to S3://$ARTIFACTS_BUCKET..."
-#          aws s3 cp $ARTIFACT_NAME s3://$ARTIFACTS_BUCKET/$ARTIFACT_NAME
-#
-#          # Also upload as latest for easy reference
-#          echo "Uploading as latest version..."
-#          aws s3 cp $ARTIFACT_NAME s3://$ARTIFACTS_BUCKET/$LATEST_ARTIFACT
-#
-#          # Create a trigger file to signal CodePipeline
-#          echo "Creating pipeline trigger file..."
-#          echo "{\"commit\": \"$IMAGE_TAG\", \"timestamp\": \"$TIMESTAMP\"}" > trigger.json
-#          aws s3 cp trigger.json s3://$ARTIFACTS_BUCKET/trigger-${TIMESTAMP}.json
-#
-#          echo "✅ Deployment artifacts uploaded successfully!"
-#          echo "Artifact: $ARTIFACT_NAME"
-#          echo "Latest: $LATEST_ARTIFACT"
-
       # Step 9: Create and Upload Deployment Artifacts
       - name: Create and Upload Deployment Artifacts
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
@@ -204,14 +90,24 @@ jobs:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
           ARTIFACTS_BUCKET: photo-upload-app-artifacts-${{ secrets.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}
         run: |
-          # Create unique filename with commit SHA and timestamp
+          # Create timestamp and artifact names
           TIMESTAMP=$(date +'%Y%m%d%H%M%S')
           ARTIFACT_NAME="build-artifact-${IMAGE_TAG}-${TIMESTAMP}.zip"
           LATEST_ARTIFACT="build-artifact-latest.zip"
-
-          echo "Creating deployment artifacts: $ARTIFACT_NAME and $LATEST_ARTIFACT"
-
-          # Create appspec.yaml
+          
+          echo "Creating deployment artifacts..."
+          echo "Unique artifact name: $ARTIFACT_NAME"
+          echo "Latest artifact name: $LATEST_ARTIFACT"
+          echo "S3 Bucket: $ARTIFACTS_BUCKET"
+          
+          # Verify S3 bucket exists and is accessible
+          echo "Checking S3 bucket accessibility..."
+          aws s3 ls s3://$ARTIFACTS_BUCKET/ || {
+            echo "Error: Cannot access S3 bucket $ARTIFACTS_BUCKET"
+            exit 1
+          }
+          
+          # Create correct appspec.yaml for ECS blue/green deployment
           cat > appspec.yaml << EOF
           version: 0.0
           Resources:
@@ -223,8 +119,8 @@ jobs:
                     ContainerName: "photo-upload-app"
                     ContainerPort: 8080
           EOF
-
-          # Create taskdef.json
+          
+          # Create taskdef.json with actual image
           cat > taskdef.json << EOF
           {
             "family": "photo-upload-app-task",
@@ -246,11 +142,26 @@ jobs:
                 ],
                 "essential": true,
                 "environment": [
-                  { "name": "SPRING_PROFILES_ACTIVE", "value": "production" },
-                  { "name": "AWS_REGION", "value": "$AWS_REGION" },
-                  { "name": "S3_BUCKET_NAME", "value": "photo-upload-app-photos-${AWS_ACCOUNT_ID}-${AWS_REGION}" },
-                  { "name": "STUDENT_NAME", "value": "Tabari Linus" },
-                  { "name": "DB_URL", "value": "jdbc:postgresql://photo-upload-app-postgres-db.${AWS_REGION}.rds.amazonaws.com:5432/photodb" }
+                  {
+                    "name": "SPRING_PROFILES_ACTIVE",
+                    "value": "production"
+                  },
+                  {
+                    "name": "AWS_REGION",
+                    "value": "$AWS_REGION"
+                  },
+                  {
+                    "name": "S3_BUCKET_NAME",
+                    "value": "photo-upload-app-photos-${AWS_ACCOUNT_ID}-${AWS_REGION}"
+                  },
+                  {
+                    "name": "STUDENT_NAME",
+                    "value": "Tabari Linus"
+                  },
+                  {
+                    "name": "DB_URL",
+                    "value": "jdbc:postgresql://photo-upload-app-postgres-db.${AWS_REGION}.rds.amazonaws.com:5432/photodb"
+                  }
                 ],
                 "secrets": [
                   {
@@ -274,21 +185,52 @@ jobs:
             ]
           }
           EOF
-
-          echo "Zipping deployment artifacts..."
+          
+          # Verify files were created
+          echo "Verifying created files..."
+          ls -la appspec.yaml taskdef.json
+          
+          # Create the zip file
+          echo "Creating zip file: $ARTIFACT_NAME"
           zip -r $ARTIFACT_NAME appspec.yaml taskdef.json
-
-          echo "Uploading artifacts to S3..."
-          aws s3 cp $ARTIFACT_NAME s3://$ARTIFACTS_BUCKET/$ARTIFACT_NAME
-          aws s3 cp $ARTIFACT_NAME s3://$ARTIFACTS_BUCKET/$LATEST_ARTIFACT
-
+          
+          # Verify zip file was created
+          if [ ! -f "$ARTIFACT_NAME" ]; then
+            echo "Error: Zip file $ARTIFACT_NAME was not created"
+            exit 1
+          fi
+          
+          echo "Zip file created successfully. Size: $(ls -lh $ARTIFACT_NAME | awk '{print $5}')"
+          
+          # Upload the versioned artifact
+          echo "Uploading $ARTIFACT_NAME to S3://$ARTIFACTS_BUCKET/$ARTIFACT_NAME..."
+          aws s3 cp $ARTIFACT_NAME s3://$ARTIFACTS_BUCKET/$ARTIFACT_NAME || {
+            echo "Error: Failed to upload $ARTIFACT_NAME"
+            exit 1
+          }
+          
+          # Upload as latest version
+          echo "Uploading as latest version: $LATEST_ARTIFACT..."
+          aws s3 cp $ARTIFACT_NAME s3://$ARTIFACTS_BUCKET/$LATEST_ARTIFACT || {
+            echo "Error: Failed to upload $LATEST_ARTIFACT"
+            exit 1
+          }
+          
+          # Verify uploads
+          echo "Verifying uploads..."
+          aws s3 ls s3://$ARTIFACTS_BUCKET/ | grep -E "(${ARTIFACT_NAME}|${LATEST_ARTIFACT})" || {
+            echo "Warning: Could not verify artifact uploads"
+          }
+          
+          # Create a trigger file to signal CodePipeline
           echo "Creating pipeline trigger file..."
-          echo "{\"commit\": \"$IMAGE_TAG\", \"timestamp\": \"$TIMESTAMP\"}" > trigger.json
+          echo "{\"commit\": \"$IMAGE_TAG\", \"timestamp\": \"$TIMESTAMP\", \"artifact\": \"$LATEST_ARTIFACT\"}" > trigger.json
           aws s3 cp trigger.json s3://$ARTIFACTS_BUCKET/trigger-${TIMESTAMP}.json
-
-          echo "✅ Deployment artifacts uploaded:"
-          aws s3 ls s3://$ARTIFACTS_BUCKET/ --recursive | grep build-artifact
-
+          
+          echo "✅ Deployment artifacts uploaded successfully!"
+          echo "Versioned artifact: $ARTIFACT_NAME"
+          echo "Latest artifact: $LATEST_ARTIFACT"
+          echo "Trigger file: trigger-${TIMESTAMP}.json"
 
       # Step 10: Push Docker image to ECR
       - name: Push Docker image to ECR
