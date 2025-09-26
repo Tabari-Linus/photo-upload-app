@@ -90,6 +90,13 @@ jobs:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
           ARTIFACTS_BUCKET: photo-upload-app-artifacts-${{ secrets.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}
         run: |
+          # Create unique filename with commit SHA and timestamp
+          TIMESTAMP=$(date +'%Y%m%d%H%M%S')
+          ARTIFACT_NAME="build-artifact-${IMAGE_TAG}-${TIMESTAMP}.zip"
+          LATEST_ARTIFACT="build-artifact-latest.zip"
+          
+          echo "Creating deployment artifacts with unique name: $ARTIFACT_NAME"
+          
           # Create correct appspec.yaml for ECS blue/green deployment
           cat > appspec.yaml << EOF
           version: 0.0
@@ -170,12 +177,23 @@ jobs:
             EOF
           
           echo "Zipping deployment artifacts..."
-          zip -r build-artifact.zip appspec.yaml taskdef.json
-          
-          echo "Uploading build-artifact.zip to S3://$ARTIFACTS_BUCKET..."
-          aws s3 cp build-artifact.zip s3://$ARTIFACTS_BUCKET/build-artifact.zip
+          zip -r $ARTIFACT_NAME appspec.yaml taskdef.json
+            
+          echo "Uploading $ARTIFACT_NAME to S3://$ARTIFACTS_BUCKET..."
+          aws s3 cp $ARTIFACT_NAME s3://$ARTIFACTS_BUCKET/$ARTIFACT_NAME
+            
+          # Also upload as latest for easy reference
+          echo "Uploading as latest version..."
+          aws s3 cp $ARTIFACT_NAME s3://$ARTIFACTS_BUCKET/$LATEST_ARTIFACT
+            
+          # Create a trigger file to signal CodePipeline
+          echo "Creating pipeline trigger file..."
+          echo "{\"commit\": \"$IMAGE_TAG\", \"timestamp\": \"$TIMESTAMP\"}" > trigger.json
+          aws s3 cp trigger.json s3://$ARTIFACTS_BUCKET/trigger-${TIMESTAMP}.json
           
           echo "✅ Deployment artifacts uploaded successfully!"
+          echo "Artifact: $ARTIFACT_NAME"
+          echo "Latest: $LATEST_ARTIFACT"
 
       # Step 10: Push Docker image to ECR
       - name: Push Docker image to ECR
