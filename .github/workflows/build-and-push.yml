@@ -90,60 +90,20 @@ jobs:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
           ARTIFACTS_BUCKET: photo-upload-app-artifacts-${{ secrets.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}
         run: |
-          # Get actual values from AWS
-          echo "Fetching actual resource values from AWS..."
-          
-          # Get subnet IDs
-          SUBNET_A=$(aws cloudformation describe-stacks --stack-name photo-upload-app --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetAId'].OutputValue" --output text)
-          SUBNET_B=$(aws cloudformation describe-stacks --stack-name photo-upload-app --query "Stacks[0].Outputs[?OutputKey=='PrivateSubnetBId'].OutputValue" --output text)
-          
-          # Get security group ID
-          TASK_SG=$(aws cloudformation describe-stacks --stack-name photo-upload-app --query "Stacks[0].Outputs[?OutputKey=='ECSTaskSecurityGroupId'].OutputValue" --output text)
-          
-          # Get DB endpoint
-          DB_ENDPOINT=$(aws cloudformation describe-stacks --stack-name photo-upload-app --query "Stacks[0].Outputs[?OutputKey=='DatabaseEndpoint'].OutputValue" --output text)
-          
-          # Get secret ARN
-          SECRET_ARN=$(aws cloudformation describe-stacks --stack-name photo-upload-app --query "Stacks[0].Outputs[?OutputKey=='DBPasswordSecretArn'].OutputValue" --output text)
-          
-          # Get task execution role ARN
-          TASK_EXEC_ROLE=$(aws cloudformation describe-stacks --stack-name photo-upload-app --query "Stacks[0].Outputs[?OutputKey=='ECSTaskExecutionRoleArn'].OutputValue" --output text)
-          
-          # Get task role ARN
-          TASK_ROLE=$(aws cloudformation describe-stacks --stack-name photo-upload-app --query "Stacks[0].Outputs[?OutputKey=='ECSTaskRoleArn'].OutputValue" --output text)
-          
-          # Get S3 bucket name
-          S3_BUCKET=$(aws cloudformation describe-stacks --stack-name photo-upload-app --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
-          
-          echo "Subnet A: $SUBNET_A"
-          echo "Subnet B: $SUBNET_B"
-          echo "Security Group: $TASK_SG"
-          echo "DB Endpoint: $DB_ENDPOINT"
-          echo "Secret ARN: $SECRET_ARN"
-          
-          # Create dynamic appspec.yaml
+          # Create correct appspec.yaml for ECS blue/green deployment
           cat > appspec.yaml << EOF
           version: 0.0
           Resources:
             - TargetService:
                 Type: AWS::ECS::Service
                 Properties:
-                  TaskDefinition: <TASK_DEFINITION>
+                  TaskDefinition: "<TASK_DEFINITION>"
                   LoadBalancerInfo:
                     ContainerName: "photo-upload-app"
                     ContainerPort: 8080
-                  PlatformVersion: "LATEST"
-                  NetworkConfiguration:
-                    AwsvpcConfiguration:
-                      Subnets:
-                        - "$SUBNET_A"
-                        - "$SUBNET_B"
-                      SecurityGroups:
-                        - "$TASK_SG"
-                      AssignPublicIp: "DISABLED"
             EOF
             
-            # Create dynamic taskdef.json
+            # Create taskdef.json with actual image
             cat > taskdef.json << EOF
             {
               "family": "photo-upload-app-task",
@@ -151,8 +111,8 @@ jobs:
               "requiresCompatibilities": ["FARGATE"],
               "cpu": "512",
               "memory": "1024",
-              "executionRoleArn": "$TASK_EXEC_ROLE",
-              "taskRoleArn": "$TASK_ROLE",
+              "executionRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/photo-upload-app-ECSTaskExecutionRole-${AWS_REGION}",
+              "taskRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/photo-upload-app-ECSTaskRole-${AWS_REGION}",
               "containerDefinitions": [
                 {
                   "name": "photo-upload-app",
@@ -175,7 +135,7 @@ jobs:
                     },
                     {
                       "name": "S3_BUCKET_NAME",
-                      "value": "$S3_BUCKET"
+                      "value": "photo-upload-app-photos-${AWS_ACCOUNT_ID}-${AWS_REGION}"
                     },
                     {
                       "name": "STUDENT_NAME",
@@ -183,17 +143,17 @@ jobs:
                     },
                     {
                       "name": "DB_URL",
-                      "value": "jdbc:postgresql://$DB_ENDPOINT:5432/photodb"
+                      "value": "jdbc:postgresql://photo-upload-app-postgres-db.${AWS_REGION}.rds.amazonaws.com:5432/photodb"
                     }
                   ],
                   "secrets": [
                     {
                       "name": "DB_USERNAME",
-                      "valueFrom": "${SECRET_ARN}:username::"
+                      "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:photo-upload-app/rds/master-password:username::"
                     },
                     {
                       "name": "DB_PASSWORD",
-                      "valueFrom": "${SECRET_ARN}:password::"
+                      "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:photo-upload-app/rds/master-password:password::"
                     }
                   ],
                   "logConfiguration": {
@@ -203,13 +163,6 @@ jobs:
                       "awslogs-region": "$AWS_REGION",
                       "awslogs-stream-prefix": "ecs"
                     }
-                  },
-                  "healthCheck": {
-                    "command": ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"],
-                    "interval": 30,
-                    "timeout": 5,
-                    "retries": 3,
-                    "startPeriod": 60
                   }
                 }
               ]
