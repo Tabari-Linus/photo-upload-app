@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:fragment="html(content)">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Photo Uploader Gallery</title>
+    <link th:href="@{/css/styles.css}" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+<nav class="navbar">
+    <div class="nav-container">
+        <h1 class="nav-logo">📷 Photo Gallery</h1>
+        <div class="nav-links">
+            <a th:href="@{/}" class="nav-link">Gallery</a>
+            <a th:href="@{/upload}" class="nav-link">Upload</a>
+        </div>
+    </div>
+</nav>
+
+<main class="main-content">
+    <div th:replace="${content}"></div>
+</main>
+
+<footer class="footer">
+    <p>&copy; 2024 Photo Uploader App - Built with Spring Boot</p>
+</footer>
+</body>
+</html>

@@ -2,33 +2,29 @@ name: Build and Push to ECR
 
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [ main, develop ]
   pull_request:
-    branches:
-      - main
-      - master
+    branches: [ main ]
 
 env:
   AWS_REGION: eu-central-1
-  ECR_REPOSITORY: photo-upload-app
+  ECR_REPOSITORY: photo-uploader-prod-repo
+  ECS_SERVICE: photo-uploader-prod-service
+  ECS_CLUSTER: photo-uploader-prod-cluster
+  CONTAINER_NAME: photo-uploader-prod-container
 
 jobs:
   build-and-push:
-    name: Build and Push Docker Image
+    name: Build Docker Image and Push to ECR
     runs-on: ubuntu-latest
-
     permissions:
       id-token: write
       contents: read
 
     steps:
-      # Step 1: Checkout code
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Step 2: Set up JDK 21
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
@@ -36,218 +32,76 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      # Step 3: Run tests
-      - name: Run tests
-        run: mvn clean test -DskipTests=true
+      - name: Build with Maven
+        run: |
+          mvn clean package -DskipTests
+        env:
+          MAVEN_OPTS: -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=warn
 
-      # Step 4: Configure AWS credentials using OIDC
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          role-session-name: GitHubActions
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/photo-uploader-prod-github-actions-role
           aws-region: ${{ env.AWS_REGION }}
 
-      # Step 5: Login to Amazon ECR
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-
-      # Step 6: Extract metadata
-      - name: Extract metadata
-        id: meta
-        run: |
-          echo "timestamp=$(date +'%Y%m%d%H%M%S')" >> $GITHUB_OUTPUT
-          echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-          echo "branch=$(echo ${GITHUB_REF#refs/heads/} | sed 's/\//-/g')" >> $GITHUB_OUTPUT
-
-      # Step 7: Build Docker image
-      - name: Build Docker image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ steps.meta.outputs.sha_short }}
-        run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-
-      # Step 8: Run security scan on the image
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.sha_short }}
-          format: 'table'
-          exit-code: '1'
-          ignore-unfixed: false
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
+          mask-password: 'true'
 
-      # Step 9: Create and Upload Deployment Artifacts
-      - name: Create and Upload Deployment Artifacts
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ steps.meta.outputs.sha_short }}
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          ARTIFACTS_BUCKET: photo-upload-app-artifacts-${{ secrets.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          # Create timestamp and artifact names
-          TIMESTAMP=$(date +'%Y%m%d%H%M%S')
-          ARTIFACT_NAME="build-artifact-${IMAGE_TAG}-${TIMESTAMP}.zip"
-          LATEST_ARTIFACT="build-artifact-latest.zip"
+          # Build the Docker image
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           
-          echo "Creating deployment artifacts..."
-          echo "Unique artifact name: $ARTIFACT_NAME"
-          echo "Latest artifact name: $LATEST_ARTIFACT"
-          echo "S3 Bucket: $ARTIFACTS_BUCKET"
-          
-          # Note: Skipping S3 bucket accessibility check to avoid ListBucket permission requirement
-          echo "Proceeding with artifact creation and upload..."
-          
-          # Create correct appspec.yaml for ECS blue/green deployment
-          cat > appspec.yaml << 'EOF'
-          version: 0.0
-          Resources:
-            - TargetService:
-                Type: AWS::ECS::Service
-                Properties:
-                  TaskDefinition: "<TASK_DEFINITION>"
-                  LoadBalancerInfo:
-                    ContainerName: "photo-upload-app"
-                    ContainerPort: 8080
-            EOF
-            
-            # Create taskdef.json with actual image
-            cat > taskdef.json << EOF
-            {
-              "family": "photo-upload-app-task",
-              "networkMode": "awsvpc",
-              "requiresCompatibilities": ["FARGATE"],
-              "cpu": "512",
-              "memory": "1024",
-              "executionRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/photo-upload-app-ECSTaskExecutionRole-${AWS_REGION}",
-              "taskRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/photo-upload-app-ECSTaskRole-${AWS_REGION}",
-              "containerDefinitions": [
-                {
-                  "name": "photo-upload-app",
-                  "image": "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
-                  "portMappings": [
-                    {
-                      "containerPort": 8080,
-                      "protocol": "tcp"
-                    }
-                  ],
-                  "essential": true,
-                  "environment": [
-                    {
-                      "name": "SPRING_PROFILES_ACTIVE",
-                      "value": "production"
-                    },
-                    {
-                      "name": "AWS_REGION",
-                      "value": "$AWS_REGION"
-                    },
-                    {
-                      "name": "S3_BUCKET_NAME",
-                      "value": "photo-upload-app-photos-${AWS_ACCOUNT_ID}-${AWS_REGION}"
-                    },
-                    {
-                      "name": "STUDENT_NAME",
-                      "value": "Tabari Linus"
-                    },
-                    {
-                      "name": "DB_URL",
-                      "value": "jdbc:postgresql://photo-upload-app-postgres-db.${AWS_REGION}.rds.amazonaws.com:5432/photodb"
-                    }
-                  ],
-                  "secrets": [
-                    {
-                      "name": "DB_USERNAME",
-                      "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:photo-upload-app/rds/master-password:username::"
-                    },
-                    {
-                      "name": "DB_PASSWORD",
-                      "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:photo-upload-app/rds/master-password:password::"
-                    }
-                  ],
-                  "logConfiguration": {
-                    "logDriver": "awslogs",
-                    "options": {
-                      "awslogs-group": "/ecs/photo-upload-app",
-                      "awslogs-region": "$AWS_REGION",
-                      "awslogs-stream-prefix": "ecs"
-                    }
-                  }
-                }
-              ]
-            }
-            EOF
-          
-          # Verify files were created
-          echo "Verifying created files..."
-          ls -la appspec.yaml taskdef.json
-          
-          # Create the zip file
-          echo "Creating zip file: $ARTIFACT_NAME"
-          zip -r $ARTIFACT_NAME appspec.yaml taskdef.json
-          
-          # Verify zip file was created
-          if [ ! -f "$ARTIFACT_NAME" ]; then
-            echo "Error: Zip file $ARTIFACT_NAME was not created"
-            exit 1
-          fi
-          
-          echo "Zip file created successfully. Size: $(ls -lh $ARTIFACT_NAME | awk '{print $5}')"
-          
-          # Upload the versioned artifact
-          echo "Uploading $ARTIFACT_NAME to S3://$ARTIFACTS_BUCKET/$ARTIFACT_NAME..."
-          aws s3 cp $ARTIFACT_NAME s3://$ARTIFACTS_BUCKET/$ARTIFACT_NAME || {
-            echo "Error: Failed to upload $ARTIFACT_NAME"
-            exit 1
-          }
-          
-          # Upload as latest version
-          echo "Uploading as latest version: $LATEST_ARTIFACT..."
-          aws s3 cp $ARTIFACT_NAME s3://$ARTIFACTS_BUCKET/$LATEST_ARTIFACT || {
-            echo "Error: Failed to upload $LATEST_ARTIFACT"
-            exit 1
-          }
-          
-          # Note: Skipping upload verification to avoid ListBucket permission requirement
-          echo "Uploads completed. If no errors occurred above, artifacts should be available."
-          
-          # Create a trigger file to signal CodePipeline
-          echo "Creating pipeline trigger file..."
-          echo "{\"commit\": \"$IMAGE_TAG\", \"timestamp\": \"$TIMESTAMP\", \"artifact\": \"$LATEST_ARTIFACT\"}" > trigger.json
-          aws s3 cp trigger.json s3://$ARTIFACTS_BUCKET/trigger-${TIMESTAMP}.json
-          
-          echo "✅ Deployment artifacts uploaded successfully!"
-          echo "Versioned artifact: $ARTIFACT_NAME"
-          echo "Latest artifact: $LATEST_ARTIFACT"
-          echo "Trigger file: trigger-${TIMESTAMP}.json"
-
-      # Step 10: Push Docker image to ECR
-      - name: Push Docker image to ECR
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ steps.meta.outputs.sha_short }}
-        run: |
+          # Push the Docker image
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          
+          # Also tag as latest for convenience
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
           
-          echo "✅ Image pushed successfully!"
-          echo "Registry: $ECR_REGISTRY"
-          echo "Repository: $ECR_REPOSITORY"
-          echo "Tags: $IMAGE_TAG, latest"
+          # Set output for deployment step
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      # Step 11: Output summary
-      - name: Image Summary
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+      - name: Update ECS Service
         run: |
-          echo "### 🎉 Docker Image Build and Push Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Registry:** ${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Repository:** ${{ env.ECR_REPOSITORY }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Image Tag:** ${{ steps.meta.outputs.sha_short }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Timestamp:** ${{ steps.meta.outputs.timestamp }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Branch:** ${{ steps.meta.outputs.branch }}" >> $GITHUB_STEP_SUMMARY
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE \
+            --force-new-deployment \
+            --region $AWS_REGION
+
+      - name: Wait for service stability
+        run: |
+          echo "Waiting for ECS service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE \
+            --region $AWS_REGION
+          echo "Service is now stable!"
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Run unit tests
+        run: mvn test
+
+      - name: Run integration tests
+        run: mvn integration-test

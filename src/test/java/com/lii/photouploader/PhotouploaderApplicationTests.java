@@ -1,12 +1,10 @@
-package com.lii.photouploadapp;
+package com.lii.photouploader;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
 
 @SpringBootTest
-@ActiveProfiles("test")
-class PhotoUploadAppApplicationTests {
+class PhotouploaderApplicationTests {
 
     @Test
     void contextLoads() {

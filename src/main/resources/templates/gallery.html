@@ -1,0 +1,41 @@
+<html xmlns:th="http://www.thymeleaf.org" th:replace="layout :: html(content=~{::content})">
+<head>
+    <title>Photo Gallery</title>
+</head>
+<body>
+<div th:fragment="content" class="gallery-container">
+    <div class="header-section">
+        <h1>Photo Gallery</h1>
+        <p class="subtitle">Upload and share your favorite moments</p>
+        <a th:href="@{/upload}" class="upload-btn">
+            <i class="fas fa-plus"></i> Upload New Photo
+        </a>
+    </div>
+
+    <div th:if="${photos.isEmpty()}" class="empty-state">
+        <i class="fas fa-images fa-3x"></i>
+        <h2>No photos yet</h2>
+        <p>Be the first to upload a photo!</p>
+        <a th:href="@{/upload}" class="btn-primary">Upload Your First Photo</a>
+    </div>
+
+    <div th:unless="${photos.isEmpty()}" class="photo-grid">
+        <div th:each="photo : ${photos}" class="photo-card">
+            <div class="photo-image">
+                <img th:src="${photo.presignedUrl}"
+                     th:alt="${photo.description}"
+                     loading="lazy"
+                     onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZGRkIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtc2l6ZT0iMTgiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+'">
+            </div>
+            <div class="photo-info">
+                <h3 th:text="${photo.imageName}">Image Name</h3>
+                <p class="photo-description" th:text="${photo.description} ?: 'No description'">Description</p>
+                <div class="photo-meta">
+                    <small th:text="${#temporals.format(photo.createdAt, 'yyyy-MM-dd HH:mm')}">Date</small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
