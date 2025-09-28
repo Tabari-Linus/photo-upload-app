@@ -8,7 +8,7 @@ on:
 
 env:
   AWS_REGION: eu-central-1
-  ECR_REPOSITORY: photo-uploader-prod-repo
+  ECR_REPOSITORY: photo-uploader-prod-repo  # This matches your CloudFormation template
   ECS_SERVICE: photo-uploader-prod-service
   ECS_CLUSTER: photo-uploader-prod-cluster
   CONTAINER_NAME: photo-uploader-prod-container
@@ -69,62 +69,46 @@ jobs:
           # Set output for deployment step
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      # Add debugging step to check what exists
-      - name: Debug - List ECS resources
+      # Create new task definition with updated image
+      - name: Create new task definition
+        id: task-def
         run: |
-          echo "=== Listing ECS Clusters ==="
-          aws ecs list-clusters --region $AWS_REGION
+          # Get current task definition
+          TASK_DEFINITION=$(aws ecs describe-task-definition \
+            --task-definition $ECS_SERVICE \
+            --region $AWS_REGION \
+            --query 'taskDefinition' \
+            --output json)
           
-          echo "=== Checking if cluster exists ==="
-          if aws ecs describe-clusters --clusters $ECS_CLUSTER --region $AWS_REGION --query 'clusters[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
-            echo "✓ Cluster $ECS_CLUSTER exists and is active"
+          # Update the image in the task definition
+          NEW_TASK_DEFINITION=$(echo $TASK_DEFINITION | jq --arg IMAGE "${{ steps.build-image.outputs.image }}" \
+            '.containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.placementConstraints) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
           
-            echo "=== Listing services in cluster ==="
-            aws ecs list-services --cluster $ECS_CLUSTER --region $AWS_REGION
+          # Register new task definition
+          NEW_TASK_DEF_ARN=$(echo $NEW_TASK_DEFINITION | aws ecs register-task-definition \
+            --region $AWS_REGION \
+            --cli-input-json file:///dev/stdin \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
           
-            echo "=== Checking if service exists ==="
-            if aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --region $AWS_REGION --query 'services[0].status' --output text 2>/dev/null | grep -q "ACTIVE\|RUNNING\|PENDING"; then
-              echo "✓ Service $ECS_SERVICE exists"
-            else
-              echo "✗ Service $ECS_SERVICE does not exist or is not active"
-              echo "Available services:"
-              aws ecs list-services --cluster $ECS_CLUSTER --region $AWS_REGION --query 'serviceArns[]' --output table
-            fi
-          else
-            echo "✗ Cluster $ECS_CLUSTER does not exist or is not active"
-            echo "Available clusters:"
-            aws ecs list-clusters --region $AWS_REGION --query 'clusterArns[]' --output table
-          fi
+          echo "new-task-def-arn=$NEW_TASK_DEF_ARN" >> $GITHUB_OUTPUT
 
-      - name: Update ECS Service (conditional)
+      - name: Update ECS Service
         run: |
-          # Only update if service exists
-          if aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --region $AWS_REGION --query 'services[0].status' --output text 2>/dev/null | grep -q "ACTIVE\|RUNNING\|PENDING"; then
-            echo "Service exists, proceeding with update..."
-            aws ecs update-service \
-              --cluster $ECS_CLUSTER \
-              --service $ECS_SERVICE \
-              --force-new-deployment \
-              --region $AWS_REGION
-          else
-            echo "Service does not exist. Skipping deployment step."
-            echo "Please create the ECS service first or update the environment variables."
-            exit 1
-          fi
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE \
+            --task-definition ${{ steps.task-def.outputs.new-task-def-arn }} \
+            --region $AWS_REGION
 
       - name: Wait for service stability
         run: |
-          # Only wait if we actually updated the service
-          if aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --region $AWS_REGION --query 'services[0].status' --output text 2>/dev/null | grep -q "ACTIVE\|RUNNING\|PENDING"; then
-            echo "Waiting for ECS service to stabilize..."
-            aws ecs wait services-stable \
-              --cluster $ECS_CLUSTER \
-              --services $ECS_SERVICE \
-              --region $AWS_REGION
-            echo "Service is now stable!"
-          else
-            echo "Service does not exist, skipping stability check."
-          fi
+          echo "Waiting for ECS service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE \
+            --region $AWS_REGION
+          echo "Service is now stable!"
 
   test:
     name: Run Tests
