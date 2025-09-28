@@ -69,6 +69,47 @@ jobs:
           # Set output for deployment step
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
+      # Debug step - add this before the "Create new task definition" step
+      - name: Debug ECS Resources
+        run: |
+          echo "=== Environment Variables ==="
+          echo "ECS_CLUSTER: $ECS_CLUSTER"
+          echo "ECS_SERVICE: $ECS_SERVICE"
+          echo "AWS_REGION: $AWS_REGION"
+          echo ""
+          
+          echo "=== Checking ECS Cluster ==="
+          aws ecs describe-clusters --clusters $ECS_CLUSTER --region $AWS_REGION || echo "Cluster not found"
+          echo ""
+          
+          echo "=== Checking ECS Service ==="
+          aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --region $AWS_REGION || echo "Service not found"
+          echo ""
+          
+          echo "=== Getting Service Details ==="
+          SERVICE_INFO=$(aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --region $AWS_REGION --query 'services[0]' 2>/dev/null || echo "null")
+          echo "Service info: $SERVICE_INFO"
+          echo ""
+          
+          if [ "$SERVICE_INFO" != "null" ]; then
+            echo "=== Getting Task Definition from Service ==="
+            TASK_DEF_ARN=$(echo $SERVICE_INFO | jq -r '.taskDefinition // "null"')
+            echo "Current task definition ARN: $TASK_DEF_ARN"
+          
+            if [ "$TASK_DEF_ARN" != "null" ] && [ "$TASK_DEF_ARN" != "" ]; then
+              echo "=== Describing Task Definition ==="
+              aws ecs describe-task-definition --task-definition $TASK_DEF_ARN --region $AWS_REGION || echo "Failed to describe task definition"
+            else
+              echo "No task definition found in service"
+            fi
+          else
+            echo "=== Listing all services in cluster ==="
+            aws ecs list-services --cluster $ECS_CLUSTER --region $AWS_REGION || echo "Failed to list services"
+          
+            echo "=== Listing all task definitions ==="
+            aws ecs list-task-definitions --region $AWS_REGION --family-prefix $ECS_SERVICE || echo "Failed to list task definitions"
+          fi  
+
       # Create new task definition with updated image
       - name: Create new task definition
         id: task-def
