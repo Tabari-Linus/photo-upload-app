@@ -1,9 +1,7 @@
-# Dockerfile
-# Multi-stage build for smaller final image
-FROM openjdk:21-jdk-slim as builder
+FROM eclipse-temurin:21-jdk-alpine AS builder
 
 # Install Maven
-RUN apt-get update && apt-get install -y maven && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache maven
 
 WORKDIR /app
 COPY pom.xml .
@@ -13,13 +11,14 @@ COPY src ./src
 RUN mvn clean package -DskipTests
 
 # Runtime stage
-FROM openjdk:21-jre-slim
+FROM eclipse-temurin:21-jre-alpine
 
 # Install curl for health checks
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache curl
 
 # Create non-root user
-RUN groupadd -r spring && useradd -r -g spring spring
+RUN addgroup -g 1001 -S spring && \
+    adduser -u 1001 -S spring -G spring
 USER spring
 
 WORKDIR /app
