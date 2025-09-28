@@ -69,22 +69,62 @@ jobs:
           # Set output for deployment step
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      - name: Update ECS Service
+      # Add debugging step to check what exists
+      - name: Debug - List ECS resources
         run: |
-          aws ecs update-service \
-            --cluster $ECS_CLUSTER \
-            --service $ECS_SERVICE \
-            --force-new-deployment \
-            --region $AWS_REGION
+          echo "=== Listing ECS Clusters ==="
+          aws ecs list-clusters --region $AWS_REGION
+          
+          echo "=== Checking if cluster exists ==="
+          if aws ecs describe-clusters --clusters $ECS_CLUSTER --region $AWS_REGION --query 'clusters[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
+            echo "✓ Cluster $ECS_CLUSTER exists and is active"
+          
+            echo "=== Listing services in cluster ==="
+            aws ecs list-services --cluster $ECS_CLUSTER --region $AWS_REGION
+          
+            echo "=== Checking if service exists ==="
+            if aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --region $AWS_REGION --query 'services[0].status' --output text 2>/dev/null | grep -q "ACTIVE\|RUNNING\|PENDING"; then
+              echo "✓ Service $ECS_SERVICE exists"
+            else
+              echo "✗ Service $ECS_SERVICE does not exist or is not active"
+              echo "Available services:"
+              aws ecs list-services --cluster $ECS_CLUSTER --region $AWS_REGION --query 'serviceArns[]' --output table
+            fi
+          else
+            echo "✗ Cluster $ECS_CLUSTER does not exist or is not active"
+            echo "Available clusters:"
+            aws ecs list-clusters --region $AWS_REGION --query 'clusterArns[]' --output table
+          fi
+
+      - name: Update ECS Service (conditional)
+        run: |
+          # Only update if service exists
+          if aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --region $AWS_REGION --query 'services[0].status' --output text 2>/dev/null | grep -q "ACTIVE\|RUNNING\|PENDING"; then
+            echo "Service exists, proceeding with update..."
+            aws ecs update-service \
+              --cluster $ECS_CLUSTER \
+              --service $ECS_SERVICE \
+              --force-new-deployment \
+              --region $AWS_REGION
+          else
+            echo "Service does not exist. Skipping deployment step."
+            echo "Please create the ECS service first or update the environment variables."
+            exit 1
+          fi
 
       - name: Wait for service stability
         run: |
-          echo "Waiting for ECS service to stabilize..."
-          aws ecs wait services-stable \
-            --cluster $ECS_CLUSTER \
-            --services $ECS_SERVICE \
-            --region $AWS_REGION
-          echo "Service is now stable!"
+          # Only wait if we actually updated the service
+          if aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --region $AWS_REGION --query 'services[0].status' --output text 2>/dev/null | grep -q "ACTIVE\|RUNNING\|PENDING"; then
+            echo "Waiting for ECS service to stabilize..."
+            aws ecs wait services-stable \
+              --cluster $ECS_CLUSTER \
+              --services $ECS_SERVICE \
+              --region $AWS_REGION
+            echo "Service is now stable!"
+          else
+            echo "Service does not exist, skipping stability check."
+          fi
 
   test:
     name: Run Tests
