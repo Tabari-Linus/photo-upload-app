@@ -1,4 +1,4 @@
-name: Build and Push to ECR
+name: Build, Push to ECR, and Deploy via CodePipeline
 
 on:
   push:
@@ -12,10 +12,11 @@ env:
   ECS_SERVICE: photo-uploader-prod-service
   ECS_CLUSTER: photo-uploader-prod-cluster
   CONTAINER_NAME: photo-uploader-prod-container
+  CODEPIPELINE_BUCKET: photo-uploader-prod-codepipeline-artifacts-${{ secrets.AWS_ACCOUNT_ID }}
 
 jobs:
   build-and-push:
-    name: Build Docker Image and Push to ECR
+    name: Build and Push Docker Image
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -43,6 +44,7 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/photo-uploader-prod-github-actions-role
           aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-${{ github.run_id }}
 
       - name: Login to Amazon ECR
         id: login-ecr
@@ -56,54 +58,225 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          # Build the Docker image and tag it as latest first
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          echo "Building Docker image..."
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
           
-          # Also tag with commit hash for versioning
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          
-          # Push both tags
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "Pushing Docker images..."
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
           
           echo "✅ Successfully pushed both tags:"
-          echo "   - $ECR_REGISTRY/$ECR_REPOSITORY:latest"
           echo "   - $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:latest" >> $GITHUB_OUTPUT
+          echo "   - $ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      - name: Update ECS Service (simple approach)
+      - name: Get ECS Task Definition details
+        id: get-task-details
         run: |
-          echo "🚀 Triggering ECS service update to pull new image..."
+          # Get current task definition
+          TASK_DEFINITION=$(aws ecs describe-task-definition \
+            --task-definition photo-uploader-prod-task \
+            --region $AWS_REGION \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
           
-          # Force new deployment - this will make ECS pull the :latest image we just pushed
-          aws ecs update-service \
-            --cluster $ECS_CLUSTER \
-            --service $ECS_SERVICE \
-            --force-new-deployment \
-            --region $AWS_REGION
+          # Get ECS execution role ARN
+          EXECUTION_ROLE=$(aws ecs describe-task-definition \
+            --task-definition photo-uploader-prod-task \
+            --region $AWS_REGION \
+            --query 'taskDefinition.executionRoleArn' \
+            --output text)
           
-          echo "✅ Service update initiated"
+          # Get ECS task role ARN
+          TASK_ROLE=$(aws ecs describe-task-definition \
+            --task-definition photo-uploader-prod-task \
+            --region $AWS_REGION \
+            --query 'taskDefinition.taskRoleArn' \
+            --output text)
+          
+          # Get RDS endpoint
+          RDS_ENDPOINT=$(aws rds describe-db-instances \
+            --db-instance-identifier photo-uploader-prod-postgres \
+            --region $AWS_REGION \
+            --query 'DBInstances[0].Endpoint.Address' \
+            --output text)
+          
+          RDS_PORT=$(aws rds describe-db-instances \
+            --db-instance-identifier photo-uploader-prod-postgres \
+            --region $AWS_REGION \
+            --query 'DBInstances[0].Endpoint.Port' \
+            --output text)
+          
+          # Get S3 bucket name
+          S3_BUCKET=$(aws s3 ls | grep photo-uploader-prod-photos2 | awk '{print $3}')
+          
+          # Get RDS Secret ARN
+          RDS_SECRET_ARN=$(aws secretsmanager list-secrets \
+            --region $AWS_REGION \
+            --query "SecretList[?Name=='photo-uploader-prod/rds/credentials'].ARN" \
+            --output text)
+          
+          echo "execution_role=$EXECUTION_ROLE" >> $GITHUB_OUTPUT
+          echo "task_role=$TASK_ROLE" >> $GITHUB_OUTPUT
+          echo "rds_endpoint=$RDS_ENDPOINT" >> $GITHUB_OUTPUT
+          echo "rds_port=$RDS_PORT" >> $GITHUB_OUTPUT
+          echo "s3_bucket=$S3_BUCKET" >> $GITHUB_OUTPUT
+          echo "rds_secret_arn=$RDS_SECRET_ARN" >> $GITHUB_OUTPUT
 
-      - name: Wait for service stability
+      - name: Create deployment artifacts
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+          EXECUTION_ROLE_ARN: ${{ steps.get-task-details.outputs.execution_role }}
+          TASK_ROLE_ARN: ${{ steps.get-task-details.outputs.task_role }}
+          RDS_ENDPOINT: ${{ steps.get-task-details.outputs.rds_endpoint }}
+          RDS_PORT: ${{ steps.get-task-details.outputs.rds_port }}
+          S3_BUCKET: ${{ steps.get-task-details.outputs.s3_bucket }}
+          RDS_SECRET_ARN: ${{ steps.get-task-details.outputs.rds_secret_arn }}
         run: |
-          echo "⏳ Waiting for ECS service to stabilize..."
-          echo "This may take several minutes for the first deployment..."
+          # Create taskdef.json with actual values
+          cat > taskdef.json <<EOF
+          {
+            "family": "photo-uploader-prod-task",
+            "networkMode": "awsvpc",
+            "requiresCompatibilities": ["FARGATE"],
+            "cpu": "256",
+            "memory": "512",
+            "executionRoleArn": "$EXECUTION_ROLE_ARN",
+            "taskRoleArn": "$TASK_ROLE_ARN",
+            "containerDefinitions": [
+              {
+                "name": "$CONTAINER_NAME",
+                "image": "<IMAGE1_NAME>",
+                "essential": true,
+                "portMappings": [
+                  {
+                    "containerPort": 8080,
+                    "protocol": "tcp"
+                  }
+                ],
+                "environment": [
+                  {
+                    "name": "SPRING_PROFILES_ACTIVE",
+                    "value": "production"
+                  },
+                  {
+                    "name": "DB_URL",
+                    "value": "jdbc:postgresql://$RDS_ENDPOINT:$RDS_PORT/photoapp"
+                  },
+                  {
+                    "name": "AWS_REGION",
+                    "value": "$AWS_REGION"
+                  },
+                  {
+                    "name": "S3_BUCKET_NAME",
+                    "value": "$S3_BUCKET"
+                  },
+                  {
+                    "name": "AWS_DEFAULT_REGION",
+                    "value": "$AWS_REGION"
+                  }
+                ],
+                "secrets": [
+                  {
+                    "name": "DB_USERNAME",
+                    "valueFrom": "${RDS_SECRET_ARN}:username::"
+                  },
+                  {
+                    "name": "DB_PASSWORD",
+                    "valueFrom": "${RDS_SECRET_ARN}:password::"
+                  }
+                ],
+                "logConfiguration": {
+                  "logDriver": "awslogs",
+                  "options": {
+                    "awslogs-group": "/ecs/photo-uploader-prod",
+                    "awslogs-region": "$AWS_REGION",
+                    "awslogs-stream-prefix": "ecs"
+                  }
+                },
+                "healthCheck": {
+                  "command": [
+                    "CMD-SHELL",
+                    "curl -f http://localhost:8080/health || exit 1"
+                  ],
+                  "interval": 30,
+                  "timeout": 5,
+                  "retries": 3,
+                  "startPeriod": 60
+                }
+              }
+            ]
+          }
+          EOF
           
-          # Wait for service to become stable
-          aws ecs wait services-stable \
-            --cluster $ECS_CLUSTER \
-            --services $ECS_SERVICE \
+          # Create appspec.yaml
+          cat > appspec.yaml <<EOF
+          version: 0.0
+          Resources:
+            - TargetService:
+                Type: AWS::ECS::Service
+                Properties:
+                  TaskDefinition: <TASK_DEFINITION>
+                  LoadBalancerInfo:
+                    ContainerName: "$CONTAINER_NAME"
+                    ContainerPort: 8080
+                  PlatformVersion: "LATEST"
+          EOF
+          
+          # Create imageDetail.json for CodePipeline
+          cat > imageDetail.json <<EOF
+          {
+            "ImageURI": "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          }
+          EOF
+          
+          echo "✅ Created deployment artifacts:"
+          echo "   - taskdef.json"
+          echo "   - appspec.yaml"
+          echo "   - imageDetail.json"
+          
+          # Show the files for debugging
+          echo "=== taskdef.json ==="
+          cat taskdef.json
+          echo ""
+          echo "=== appspec.yaml ==="
+          cat appspec.yaml
+          echo ""
+          echo "=== imageDetail.json ==="
+          cat imageDetail.json
+
+      - name: Package and upload deployment artifacts to S3
+        run: |
+          # Create deployment package
+          zip deployment-artifacts.zip taskdef.json appspec.yaml imageDetail.json
+          
+          # Upload to S3 (this will trigger CodePipeline via EventBridge)
+          aws s3 cp deployment-artifacts.zip s3://$CODEPIPELINE_BUCKET/deployment-artifacts.zip
+          
+          echo "✅ Uploaded deployment artifacts to S3"
+          echo "   S3 URI: s3://$CODEPIPELINE_BUCKET/deployment-artifacts.zip"
+
+      - name: Wait for CodePipeline execution
+        run: |
+          echo "⏳ Waiting for CodePipeline to start..."
+          sleep 10
+          
+          # Get the latest pipeline execution
+          EXECUTION_ID=$(aws codepipeline list-pipeline-executions \
+            --pipeline-name photo-uploader-prod-pipeline \
             --region $AWS_REGION \
-            --cli-read-timeout 900
+            --max-items 1 \
+            --query 'pipelineExecutionSummaries[0].pipelineExecutionId' \
+            --output text)
           
-          echo "🎉 Service is now stable!"
+          echo "📋 Pipeline Execution ID: $EXECUTION_ID"
+          echo "🔗 View pipeline: https://$AWS_REGION.console.aws.amazon.com/codesuite/codepipeline/pipelines/photo-uploader-prod-pipeline/view?region=$AWS_REGION"
           
-          # Show final status
-          aws ecs describe-services \
-            --cluster $ECS_CLUSTER \
-            --services $ECS_SERVICE \
-            --region $AWS_REGION \
-            --query 'services[0].{Status:status,Running:runningCount,Desired:desiredCount}'
+          echo "✅ CodePipeline has been triggered!"
+          echo "The blue/green deployment will proceed automatically."
 
   test:
     name: Run Tests
