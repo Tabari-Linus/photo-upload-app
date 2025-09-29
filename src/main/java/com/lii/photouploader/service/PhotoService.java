@@ -1,6 +1,6 @@
 package com.lii.photouploader.service;
 
-import com.lii.photouploader.entity.Photo;
+import com.lii.photouploader.entity.Photos;
 import com.lii.photouploader.repository.PhotoRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -30,7 +30,7 @@ public class PhotoService {
     @Value("${app.s3.bucket-name}")
     private String bucketName;
 
-    public Photo uploadPhoto(MultipartFile file, String description) throws IOException {
+    public Photos uploadPhoto(MultipartFile file, String description) throws IOException {
         // Validate file
         validateImageFile(file);
 
@@ -45,18 +45,18 @@ public class PhotoService {
         String presignedUrl = s3Service.generatePresignedUrl(s3ObjectKey);
 
         // Create and save photo entity
-        Photo photo = new Photo(file.getOriginalFilename(), description, s3ObjectKey);
-        photo.setPresignedUrl(presignedUrl);
-        photo.setPresignedUrlExpiry(s3Service.calculateExpiryTime());
+        Photos photos = new Photos(file.getOriginalFilename(), description, s3ObjectKey);
+        photos.setPresignedUrl(presignedUrl);
+        photos.setPresignedUrlExpiry(s3Service.calculateExpiryTime());
 
-        return photoRepository.save(photo);
+        return photoRepository.save(photos);
     }
 
-    public List<Photo> getAllPhotos() {
-        List<Photo> photos = photoRepository.findAll();
+    public List<Photos> getAllPhotos() {
+        List<Photos> photos = photoRepository.findAll();
 
         // Check and refresh expired presigned URLs
-        for (Photo photo : photos) {
+        for (Photos photo : photos) {
             if (s3Service.isUrlExpired(photo.getPresignedUrlExpiry())) {
                 String newPresignedUrl = s3Service.generatePresignedUrl(photo.getS3ObjectKey());
                 photo.setPresignedUrl(newPresignedUrl);

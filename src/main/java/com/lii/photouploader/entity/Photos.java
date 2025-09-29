@@ -6,7 +6,7 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "photos")
-public class Photo {
+public class Photos {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
@@ -29,11 +29,11 @@ public class Photo {
     private LocalDateTime createdAt;
 
     // Constructors
-    public Photo() {
+    public Photos() {
         this.createdAt = LocalDateTime.now();
     }
 
-    public Photo(String imageName, String description, String s3ObjectKey) {
+    public Photos(String imageName, String description, String s3ObjectKey) {
         this();
         this.imageName = imageName;
         this.description = description;

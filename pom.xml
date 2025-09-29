@@ -9,7 +9,7 @@
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>com.lii</groupId>
-    <artifactId>photo-upload-app</artifactId>
+    <artifactId>photos-upload-app</artifactId>
     <version>1.0.0</version>
     <name>Photo Upload App</name>
     <description>Spring Boot Photo Upload Application</description>

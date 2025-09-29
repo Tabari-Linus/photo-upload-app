@@ -1,6 +1,6 @@
 package com.lii.photouploader.controller;
 
-import com.lii.photouploader.entity.Photo;
+import com.lii.photouploader.entity.Photos;
 import com.lii.photouploader.service.PhotoService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,8 +46,8 @@ public class PhotoController {
                 return "upload";
             }
 
-            Photo uploadedPhoto = photoService.uploadPhoto(file, description);
-            logger.info("Photo uploaded successfully: {}", uploadedPhoto.getId());
+            Photos uploadedPhotos = photoService.uploadPhoto(file, description);
+            logger.info("Photo uploaded successfully: {}", uploadedPhotos.getId());
 
             model.addAttribute("success", "Photo uploaded successfully!");
 

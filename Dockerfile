@@ -24,7 +24,7 @@ USER spring
 WORKDIR /app
 
 # Copy the built JAR from builder stage
-COPY --from=builder /app/target/photo-upload-app-1.0.0.jar app.jar
+COPY --from=builder /app/target/photos-upload-app-1.0.0.jar app.jar
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
