@@ -12,7 +12,7 @@ env:
   ECS_SERVICE: photo-uploader-prod-service
   ECS_CLUSTER: photo-uploader-prod-cluster
   CONTAINER_NAME: photo-uploader-prod-container
-  CODEPIPELINE_BUCKET: photo-uploader-prod-codepipeline-artifacts-${{ secrets.AWS_ACCOUNT_ID }}
+  CODEPIPELINE_BUCKET: photo-uploader-prod-pipeline-${{ secrets.AWS_ACCOUNT_ID }}
 
 jobs:
   build-and-push:
