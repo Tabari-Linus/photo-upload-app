@@ -1,110 +1,219 @@
 package com.lii.photouploader.service;
 
-import com.lii.photouploader.entity.Photos;
-import com.lii.photouploader.repository.PhotoRepository;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
+import com.lii.photouploadapp.dto.PhotoDTO;
+import com.lii.photouploadapp.model.Photo;
+import com.lii.photouploadapp.repository.PhotoRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.util.Arrays;
+import java.time.LocalDateTime;
 import java.util.List;
-import java.util.UUID;
+import java.util.stream.Collectors;
 
+/**
+ * Service class for managing photo operations
+ * Coordinates between S3 storage and database operations
+ */
 @Service
+@Transactional
 public class PhotoService {
 
-    private static final List<String> ALLOWED_CONTENT_TYPES = Arrays.asList(
-            "image/jpeg", "image/png", "image/gif", "image/webp"
+    private static final Logger logger = LoggerFactory.getLogger(PhotoService.class);
+
+    private final PhotoRepository photoRepository;
+    private final S3Service s3Service;
+
+    // Maximum file size: 10MB
+    private static final long MAX_FILE_SIZE = 10 * 1024 * 1024;
+
+    // Allowed image types
+    private static final List<String> ALLOWED_CONTENT_TYPES = List.of(
+            "image/jpeg",
+            "image/jpg",
+            "image/png",
+            "image/gif",
+            "image/webp"
     );
 
-    private static final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+    public PhotoService(PhotoRepository photoRepository, S3Service s3Service) {
+        this.photoRepository = photoRepository;
+        this.s3Service = s3Service;
+    }
 
-    @Autowired
-    private PhotoRepository photoRepository;
 
-    @Autowired
-    private S3Service s3Service;
+    /**
+     * Upload a photo with description
+     * @param file The image file to upload
+     * @param description Description of the photo
+     * @return The created PhotoDTO
+     */
+    public PhotoDTO uploadPhoto(MultipartFile file, String description) throws IOException {
+        logger.info("Processing photo upload: {}", file.getOriginalFilename());
 
-    @Value("${app.s3.bucket-name}")
-    private String bucketName;
-
-    public Photos uploadPhoto(MultipartFile file, String description) throws IOException {
         // Validate file
-        validateImageFile(file);
+        validateFile(file);
 
-        // Generate unique key for S3
-        String fileExtension = getFileExtension(file.getOriginalFilename());
-        String s3ObjectKey = UUID.randomUUID().toString() + fileExtension;
+        try {
+            // Upload to S3
+            String objectKey = s3Service.uploadFile(file);
 
-        // Upload to S3
-        s3Service.uploadFile(s3ObjectKey, file.getBytes(), file.getContentType());
+            // Generate presigned URL
+            String presignedUrl = s3Service.generatePresignedUrl(objectKey);
 
-        // Generate presigned URL
-        String presignedUrl = s3Service.generatePresignedUrl(s3ObjectKey);
+            // Create database entry
+            Photo photo = new Photo();
+            photo.setObjectKey(objectKey);
+            photo.setDescription(description);
+            photo.setPresignedUrl(presignedUrl);
+            photo.setFileName(file.getOriginalFilename());
+            photo.setFileSize(file.getSize());
+            photo.setContentType(file.getContentType());
+            photo.setUrlExpiryTime(LocalDateTime.now().plusDays(2)); // 2 days as per requirement
 
-        // Create and save photo entity
-        Photos photos = new Photos(file.getOriginalFilename(), description, s3ObjectKey);
-        photos.setPresignedUrl(presignedUrl);
-        photos.setPresignedUrlExpiry(s3Service.calculateExpiryTime());
+            Photo savedPhoto = photoRepository.save(photo);
+            logger.info("Successfully saved photo metadata with ID: {}", savedPhoto.getId());
 
-        return photoRepository.save(photos);
-    }
+            return convertToDTO(savedPhoto);
 
-    public List<Photos> getAllPhotos() {
-        List<Photos> photos = photoRepository.findAll();
-
-        // Check and refresh expired presigned URLs
-        for (Photos photo : photos) {
-            if (s3Service.isUrlExpired(photo.getPresignedUrlExpiry())) {
-                String newPresignedUrl = s3Service.generatePresignedUrl(photo.getS3ObjectKey());
-                photo.setPresignedUrl(newPresignedUrl);
-                photo.setPresignedUrlExpiry(s3Service.calculateExpiryTime());
-                photoRepository.save(photo);
-            }
+        } catch (Exception e) {
+            logger.error("Failed to upload photo: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to upload photo: " + e.getMessage(), e);
         }
-
-        return photoRepository.findAll();
     }
 
-    private void validateImageFile(MultipartFile file) throws IOException {
+    /**
+     * Get all photos from the gallery
+     * @return List of PhotoDTOs
+     */
+    public List<PhotoDTO> getAllPhotos() {
+        logger.info("Fetching all photos from gallery");
+
+        List<Photo> photos = photoRepository.findAllByOrderByUploadedAtDesc();
+
+        // Check and refresh expired URLs
+        photos = photos.stream()
+                .map(this::refreshUrlIfExpired)
+                .collect(Collectors.toList());
+
+        logger.info("Retrieved {} photos from gallery", photos.size());
+        return photos.stream()
+                .map(this::convertToDTO)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Get a single photo by ID
+     * @param id Photo ID
+     * @return PhotoDTO or null if not found
+     */
+    public PhotoDTO getPhotoById(Long id) {
+        logger.info("Fetching photo with ID: {}", id);
+
+        return photoRepository.findById(id)
+                .map(this::refreshUrlIfExpired)
+                .map(this::convertToDTO)
+                .orElse(null);
+    }
+
+
+    /**
+     * Delete a photo by ID
+     * @param id Photo ID to delete
+     */
+    @Transactional
+    public void deletePhoto(Long id) {
+        logger.info("Deleting photo with ID: {}", id);
+
+        photoRepository.findById(id).ifPresent(photo -> {
+            // Delete from S3
+            s3Service.deleteFile(photo.getObjectKey());
+
+            // Delete from database
+            photoRepository.delete(photo);
+            logger.info("Successfully deleted photo with ID: {}", id);
+        });
+    }
+
+    /**
+     * Refresh presigned URL if expired
+     * @param photo The photo entity
+     * @return Updated photo entity
+     */
+    private Photo refreshUrlIfExpired(Photo photo) {
+        if (photo.isUrlExpired()) {
+            logger.info("Refreshing expired URL for photo: {}", photo.getId());
+
+            String newPresignedUrl = s3Service.generatePresignedUrl(photo.getObjectKey());
+            photo.setPresignedUrl(newPresignedUrl);
+            photo.setUrlExpiryTime(LocalDateTime.now().plusDays(2));
+
+            return photoRepository.save(photo);
+        }
+        return photo;
+    }
+
+    /**
+     * Validate uploaded file
+     * @param file The file to validate
+     */
+    private void validateFile(MultipartFile file) {
         if (file.isEmpty()) {
-            throw new IllegalArgumentException("File is empty");
+            throw new IllegalArgumentException("File cannot be empty");
         }
 
         if (file.getSize() > MAX_FILE_SIZE) {
-            throw new IllegalArgumentException("File size exceeds 10MB limit");
+            throw new IllegalArgumentException("File size exceeds maximum allowed size of 10MB");
         }
 
         String contentType = file.getContentType();
-        if (contentType == null || !ALLOWED_CONTENT_TYPES.contains(contentType)) {
-            throw new IllegalArgumentException("Invalid file type. Allowed types: JPEG, PNG, GIF, WebP");
-        }
-
-        // Additional validation: check file signature
-        if (!isValidImageSignature(file.getBytes())) {
-            throw new IllegalArgumentException("File content does not match image type");
+        if (contentType == null || !ALLOWED_CONTENT_TYPES.contains(contentType.toLowerCase())) {
+            throw new IllegalArgumentException("Invalid file type. Only JPEG, PNG, GIF, and WEBP images are allowed");
         }
     }
 
-    private boolean isValidImageSignature(byte[] fileBytes) {
-        if (fileBytes.length < 4) return false;
-
-        // Check for common image file signatures
-        return (fileBytes[0] == (byte) 0xFF && fileBytes[1] == (byte) 0xD8) || // JPEG
-                (fileBytes[0] == (byte) 0x89 && fileBytes[1] == (byte) 0x50 &&
-                        fileBytes[2] == (byte) 0x4E && fileBytes[3] == (byte) 0x47) || // PNG
-                (fileBytes[0] == (byte) 'G' && fileBytes[1] == (byte) 'I' &&
-                        fileBytes[2] == (byte) 'F') || // GIF
-                (fileBytes[0] == (byte) 'R' && fileBytes[1] == (byte) 'I' &&
-                        fileBytes[2] == (byte) 'F' && fileBytes[3] == (byte) 'F'); // WebP
+    /**
+     * Convert Photo entity to DTO
+     * @param photo The photo entity
+     * @return PhotoDTO
+     */
+    private PhotoDTO convertToDTO(Photo photo) {
+        return PhotoDTO.builder()
+                .id(photo.getId())
+                .fileName(photo.getFileName())
+                .description(photo.getDescription())
+                .presignedUrl(photo.getPresignedUrl())
+                .contentType(photo.getContentType())
+                .fileSize(photo.getFileSize())
+                .uploadedAt(photo.getUploadedAt())
+                .urlExpired(photo.isUrlExpired())
+                .build();
     }
 
-    private String getFileExtension(String filename) {
-        if (filename == null || filename.lastIndexOf(".") == -1) {
-            return ".jpg";
+    /**
+     * Refresh all expired URLs (can be called by a scheduled task)
+     */
+    @Transactional
+    public void refreshAllExpiredUrls() {
+        logger.info("Starting batch refresh of expired URLs");
+
+        List<Photo> expiredPhotos = photoRepository.findPhotosWithExpiredUrls(LocalDateTime.now());
+
+        for (Photo photo : expiredPhotos) {
+            try {
+                String newPresignedUrl = s3Service.generatePresignedUrl(photo.getObjectKey());
+                photo.setPresignedUrl(newPresignedUrl);
+                photo.setUrlExpiryTime(LocalDateTime.now().plusDays(2));
+                photoRepository.save(photo);
+                logger.info("Refreshed URL for photo: {}", photo.getId());
+            } catch (Exception e) {
+                logger.error("Failed to refresh URL for photo {}: {}", photo.getId(), e.getMessage());
+            }
         }
-        return filename.substring(filename.lastIndexOf("."));
+
+        logger.info("Completed batch refresh. Refreshed {} URLs", expiredPhotos.size());
     }
 }
