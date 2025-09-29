@@ -64,4 +64,12 @@ public class PhotoController {
 
         return "upload";
     }
+
+
+    @GetMapping("/health")
+    public String health() {
+        return "health";
+    }
+
+
 }
