@@ -1,7 +1,8 @@
 package com.lii.photouploader.controller;
 
-import com.lii.photouploadapp.dto.PhotoDTO;
-import com.lii.photouploadapp.service.PhotoService;
+
+import com.lii.photouploader.dto.PhotoDTO;
+import com.lii.photouploader.service.PhotoService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Controller;

@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class Photo {
+public class Photos {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

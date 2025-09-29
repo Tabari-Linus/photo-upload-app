@@ -1,8 +1,9 @@
 package com.lii.photouploader.service;
 
-import com.lii.photouploadapp.dto.PhotoDTO;
-import com.lii.photouploadapp.model.Photo;
-import com.lii.photouploadapp.repository.PhotoRepository;
+
+import com.lii.photouploader.dto.PhotoDTO;
+import com.lii.photouploader.model.Photos;
+import com.lii.photouploader.repository.PhotoRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -65,7 +66,7 @@ public class PhotoService {
             String presignedUrl = s3Service.generatePresignedUrl(objectKey);
 
             // Create database entry
-            Photo photo = new Photo();
+            Photos photo = new Photos();
             photo.setObjectKey(objectKey);
             photo.setDescription(description);
             photo.setPresignedUrl(presignedUrl);
@@ -74,7 +75,7 @@ public class PhotoService {
             photo.setContentType(file.getContentType());
             photo.setUrlExpiryTime(LocalDateTime.now().plusDays(2)); // 2 days as per requirement
 
-            Photo savedPhoto = photoRepository.save(photo);
+            Photos savedPhoto = photoRepository.save(photo);
             logger.info("Successfully saved photo metadata with ID: {}", savedPhoto.getId());
 
             return convertToDTO(savedPhoto);
@@ -92,7 +93,7 @@ public class PhotoService {
     public List<PhotoDTO> getAllPhotos() {
         logger.info("Fetching all photos from gallery");
 
-        List<Photo> photos = photoRepository.findAllByOrderByUploadedAtDesc();
+        List<Photos> photos = photoRepository.findAllByOrderByUploadedAtDesc();
 
         // Check and refresh expired URLs
         photos = photos.stream()
@@ -143,7 +144,7 @@ public class PhotoService {
      * @param photo The photo entity
      * @return Updated photo entity
      */
-    private Photo refreshUrlIfExpired(Photo photo) {
+    private Photos refreshUrlIfExpired(Photos photo) {
         if (photo.isUrlExpired()) {
             logger.info("Refreshing expired URL for photo: {}", photo.getId());
 
@@ -180,7 +181,7 @@ public class PhotoService {
      * @param photo The photo entity
      * @return PhotoDTO
      */
-    private PhotoDTO convertToDTO(Photo photo) {
+    private PhotoDTO convertToDTO(Photos photo) {
         return PhotoDTO.builder()
                 .id(photo.getId())
                 .fileName(photo.getFileName())
@@ -200,9 +201,9 @@ public class PhotoService {
     public void refreshAllExpiredUrls() {
         logger.info("Starting batch refresh of expired URLs");
 
-        List<Photo> expiredPhotos = photoRepository.findPhotosWithExpiredUrls(LocalDateTime.now());
+        List<Photos> expiredPhotos = photoRepository.findPhotosWithExpiredUrls(LocalDateTime.now());
 
-        for (Photo photo : expiredPhotos) {
+        for (Photos photo : expiredPhotos) {
             try {
                 String newPresignedUrl = s3Service.generatePresignedUrl(photo.getObjectKey());
                 photo.setPresignedUrl(newPresignedUrl);
