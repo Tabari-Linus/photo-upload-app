@@ -11,7 +11,7 @@
   "containerDefinitions": [
     {
       "name": "photo-uploader-prod-container",
-      "image": "IMAGE_URL",
+      "image": "<IMAGE1_NAME>",
       "essential": true,
       "portMappings": [
         {

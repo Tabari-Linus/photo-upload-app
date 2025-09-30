@@ -259,24 +259,7 @@ jobs:
           echo "✅ Uploaded deployment artifacts to S3"
           echo "   S3 URI: s3://$CODEPIPELINE_BUCKET/deployment-artifacts.zip"
 
-#      - name: Wait for CodePipeline execution
-#        run: |
-#          echo "⏳ Waiting for CodePipeline to start..."
-#          sleep 10
-#
-#          # Get the latest pipeline execution
-#          EXECUTION_ID=$(aws codepipeline list-pipeline-executions \
-#            --pipeline-name photo-uploader-prod-pipeline \
-#            --region $AWS_REGION \
-#            --max-items 1 \
-#            --query 'pipelineExecutionSummaries[0].pipelineExecutionId' \
-#            --output text)
-#
-#          echo "📋 Pipeline Execution ID: $EXECUTION_ID"
-#          echo "🔗 View pipeline: https://$AWS_REGION.console.aws.amazon.com/codesuite/codepipeline/pipelines/photo-uploader-prod-pipeline/view?region=$AWS_REGION"
-#
-#          echo "✅ CodePipeline has been triggered!"
-#          echo "The blue/green deployment will proceed automatically."
+
 
   test:
     name: Run Tests
