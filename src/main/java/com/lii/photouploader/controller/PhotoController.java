@@ -48,9 +48,6 @@ public class PhotoController {
             model.addAttribute("photoCount", photos.size());
 
 
-            logger.info("S3_BUCKET_NAME env var: {}", System.getenv("S3_BUCKET_NAME"));
-            logger.info("AWS_REGION env var: {}", System.getenv("AWS_REGION"));
-            logger.info("Style","##############/n");
             logger.info("Loaded {} photos for gallery display", photos.size());
             return "index";
 
