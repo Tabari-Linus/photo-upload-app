@@ -11,7 +11,7 @@
   "containerDefinitions": [
     {
       "name": "photo-uploader-prod-container",
-      "image": "<IMAGE1_NAME>",
+      "image": "414392949441.dkr.ecr.eu-central-1.amazonaws.com/photo-uploader-prod-repo:latest",
       "essential": true,
       "portMappings": [
         {
