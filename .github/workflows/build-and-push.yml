@@ -109,8 +109,17 @@ jobs:
             --query 'DBInstances[0].Endpoint.Port' \
             --output text)
           
-          # Get S3 bucket name
-          S3_BUCKET=$(aws s3 ls | grep photo-uploader-prod-photos2 | awk '{print $3}')
+          # Get S3 bucket name - FIXED VERSION
+          S3_BUCKET=$(aws s3api list-buckets \
+            --query "Buckets[?contains(Name, 'photo-uploader-prod-photos2')].Name" \
+            --output text)
+          
+          # Fallback if the above doesn't work
+          if [ -z "$S3_BUCKET" ]; then
+            S3_BUCKET="photo-uploader-prod-photos2-${{ secrets.AWS_ACCOUNT_ID }}"
+          fi
+          
+          echo "Found S3 bucket: $S3_BUCKET"
           
           # Get RDS Secret ARN
           RDS_SECRET_ARN=$(aws secretsmanager list-secrets \
